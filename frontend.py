@@ -1,39 +1,23 @@
-"""
-frontend_standalone.py - Chimera Streamlit Frontend (Standalone)
-Direct connection to AI module without backend API
-
-Install: 
-pip install streamlit plotly pandas faiss-cpu sentence-transformers PyPDF2 python-docx beautifulsoup4 requests python-dotenv google-generativeai
-Run: 
-streamlit run frontend_standalone.py
-"""
-
 import streamlit as st
 import os
-from typing import List, Dict
-import plotly.graph_objects as go
-import plotly.express as px
 from datetime import datetime
 import pandas as pd
-from dotenv import load_dotenv
+import plotly.express as px
 import google.generativeai as genai
-import PyPDF2
-import docx
+from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 import requests
+import PyPDF2
+import docx
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
-
-# Load environment and configure Gemini (for text generation only)
-load_dotenv()
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-genai.configure(api_key=GEMINI_API_KEY)
-
-# Import AI module
 from ai import ChimeraAI
 
-# Streamlit page config
+load_dotenv()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
+
 st.set_page_config(
     page_title="Chimera AI Assistant",
     page_icon="🤖",
@@ -41,7 +25,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- Custom CSS ---
 st.markdown("""
 <style>
     .main-header {
@@ -67,18 +50,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Knowledge Base using FAISS + Hugging Face ---
-# --- Knowledge Base using FAISS + Hugging Face ---
+
 class KnowledgeBase:
     def __init__(self):
-        """Initialize FAISS-based local knowledge base."""
         self.docs = []
         self.metadatas = []
         self.model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
         self.index = None
 
     def _update_index(self):
-        """Rebuild FAISS index when documents are added."""
         if not self.docs:
             self.index = None
             return
@@ -87,9 +67,7 @@ class KnowledgeBase:
         self.index.add(embeddings)
 
     def add_text(self, text: str, metadata: dict = None):
-        """Add raw text, split into chunks, and update FAISS index."""
-        # Clean and chunk text
-        chunks = [c.strip() for c in text.split('\n\n') if c.strip() and len(c.strip()) > 40]
+        chunks = [c.strip() for c in text.split("\n\n") if c.strip() and len(c.strip()) > 40]
         for chunk in chunks:
             self.docs.append(chunk)
             self.metadatas.append(metadata or {})
@@ -97,53 +75,39 @@ class KnowledgeBase:
         return len(chunks)
 
     def add_pdf(self, file):
-        """Extract text from a PDF and add to knowledge base."""
         pdf_reader = PyPDF2.PdfReader(file)
         text = "\n\n".join([page.extract_text() or "" for page in pdf_reader.pages])
         return self.add_text(text, {"source": file.name, "type": "pdf"})
 
     def add_docx(self, file):
-        """Extract text from a Word document and add to knowledge base."""
         doc = docx.Document(file)
         text = "\n\n".join([p.text for p in doc.paragraphs if p.text.strip()])
         return self.add_text(text, {"source": file.name, "type": "docx"})
 
     def scrape_website(self, url: str):
-        """Scrape and clean readable website text (auto-detects main content)."""
         try:
-            headers = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) "
-                    "Gecko/20100101 Firefox/121.0"
-                )
-            }
+            headers = {"User-Agent": "Mozilla/5.0"}
             response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
-
             soup = BeautifulSoup(response.text, "html.parser")
 
-            # Remove scripts, navbars, and repetitive tags
             for tag in soup(["script", "style", "nav", "footer", "header", "form", "aside"]):
                 tag.decompose()
 
-            # Extract main readable content
             main = soup.find("main") or soup.find("article") or soup.body or soup
             paragraphs = [
-                p.get_text(separator=" ", strip=True)
+                p.get_text(" ", strip=True)
                 for p in main.find_all(["p", "h1", "h2", "h3"])
                 if len(p.get_text(strip=True)) > 40
             ]
             text = "\n\n".join(paragraphs)
-
             if not text.strip():
-                raise Exception("No meaningful text extracted from page")
-
+                raise Exception("No meaningful text extracted.")
             return self.add_text(text, {"source": url, "type": "website"})
         except Exception as e:
             raise Exception(f"Scraping failed: {str(e)}")
 
     def search(self, query: str, n: int = 3, db=None):
-        """Retrieve top-n most relevant text chunks from FAISS index."""
         if not self.index or not self.docs:
             return []
         query_emb = np.array(self.model.encode([query])).astype("float32")
@@ -151,21 +115,19 @@ class KnowledgeBase:
         return [self.docs[i] for i in indices[0] if i < len(self.docs)]
 
     def get_count(self):
-        """Return number of stored text chunks."""
         return len(self.docs)
 
 
-# --- Initialize session state ---
-if 'kb' not in st.session_state:
+if "kb" not in st.session_state:
     st.session_state.kb = KnowledgeBase()
-if 'ai' not in st.session_state:
+if "ai" not in st.session_state:
     st.session_state.ai = ChimeraAI(st.session_state.kb)
-if 'messages' not in st.session_state:
+if "messages" not in st.session_state:
     st.session_state.messages = []
-if 'session_id' not in st.session_state:
+if "session_id" not in st.session_state:
     st.session_state.session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-# --- Helper function ---
+
 def display_message(role: str, content: str):
     css_class = "user-message" if role == "user" else "assistant-message"
     icon = "👤" if role == "user" else "🤖"
@@ -176,11 +138,11 @@ def display_message(role: str, content: str):
     </div>
     """, unsafe_allow_html=True)
 
-# --- Sidebar ---
+
 with st.sidebar:
     st.image("https://via.placeholder.com/150x50/1f77b4/ffffff?text=CHIMERA", use_container_width=True)
     st.markdown("### 🤖 Chimera AI Assistant")
-    st.markdown("*Standalone Mode - Direct AI Connection*")
+    st.markdown("*Standalone Mode - Local AI Engine*")
     st.markdown("---")
     st.text_input("Session ID", value=st.session_state.session_id, disabled=True)
 
@@ -200,18 +162,16 @@ with st.sidebar:
     st.markdown("---")
     st.metric("Documents", st.session_state.kb.get_count())
     stats = st.session_state.ai.get_statistics()
-    st.metric("Conversations", stats['total_conversations'])
-    st.metric("Messages", stats['total_messages'])
+    st.metric("Conversations", stats["total_conversations"])
+    st.metric("Messages", stats["total_messages"])
     st.markdown("---")
-    st.success("✅ Local FAISS embeddings (no API costs)")
+    st.success("✅ Using local FAISS embeddings (no API costs)")
 
-# --- Main Header ---
+
 st.markdown('<div class="main-header">🤖 Chimera AI Assistant</div>', unsafe_allow_html=True)
 
-# --- Tabs ---
 tab1, tab2, tab3, tab4 = st.tabs(["💬 Chat", "📚 Knowledge Base", "📊 Analytics", "⚙️ Advanced"])
 
-# --- Chat Tab ---
 with tab1:
     st.markdown("### Chat with Chimera")
     for msg in st.session_state.messages:
@@ -233,9 +193,9 @@ with tab1:
                 st.error(f"Error: {str(e)}")
         st.rerun()
 
-# --- Knowledge Base Tab ---
+
 with tab2:
-    st.markdown("### 📚 Knowledge Base Management")
+    st.markdown("### 📚 Knowledge Base")
     tab_text, tab_site, tab_pdf, tab_docx = st.tabs(["📝 Text", "🌐 Website", "📄 PDF", "📃 Word"])
 
     with tab_text:
@@ -243,7 +203,7 @@ with tab2:
         if st.button("➕ Add Text"):
             if text_content.strip():
                 chunks = st.session_state.kb.add_text(text_content, {"type": "text"})
-                st.success(f"✅ Added {chunks} text chunks!")
+                st.success(f"Added {chunks} chunks to the knowledge base.")
             else:
                 st.warning("Please enter text.")
 
@@ -253,48 +213,48 @@ with tab2:
             if url:
                 try:
                     chunks = st.session_state.kb.scrape_website(url)
-                    st.success(f"✅ Added {chunks} chunks from website!")
+                    st.success(f"Added {chunks} chunks from website.")
                 except Exception as e:
-                    st.error(f"❌ {str(e)}")
+                    st.error(f"{str(e)}")
 
     with tab_pdf:
-        pdf_file = st.file_uploader("Upload PDF", type=['pdf'])
+        pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
         if st.button("📄 Process PDF") and pdf_file:
             chunks = st.session_state.kb.add_pdf(pdf_file)
-            st.success(f"✅ Added {chunks} chunks from PDF!")
+            st.success(f"Added {chunks} chunks from PDF.")
 
     with tab_docx:
-        doc_file = st.file_uploader("Upload DOCX", type=['docx'])
+        doc_file = st.file_uploader("Upload DOCX", type=["docx"])
         if st.button("📃 Process DOCX") and doc_file:
             chunks = st.session_state.kb.add_docx(doc_file)
-            st.success(f"✅ Added {chunks} chunks from DOCX!")
+            st.success(f"Added {chunks} chunks from DOCX.")
 
-# --- Analytics Tab ---
+
 with tab3:
-    st.markdown("### 📊 Conversation Analytics")
+    st.markdown("### 📊 Analytics")
     msgs = st.session_state.ai.get_conversation(st.session_state.session_id)
     if msgs:
         df = pd.DataFrame(msgs)
         st.metric("Messages", len(df))
-        fig = px.bar(df, x=df.index, y=df['content'].apply(len), color='role')
+        fig = px.bar(df, x=df.index, y=df["content"].apply(len), color="role")
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Start a chat to see analytics.")
 
-# --- Advanced Tab ---
+
 with tab4:
     st.markdown("### ⚙️ Advanced Tools")
     if st.button("🎯 Analyze Lead Quality"):
         if st.session_state.messages:
-            last_user_msg = next((m['content'] for m in reversed(st.session_state.messages) if m['role'] == 'user'), "")
+            last_msg = next((m["content"] for m in reversed(st.session_state.messages) if m["role"] == "user"), "")
             history = st.session_state.ai.get_conversation(st.session_state.session_id)
-            lead = st.session_state.ai._analyze_lead_quality(last_user_msg, history)
+            lead = st.session_state.ai._analyze_lead_quality(last_msg, history)
             st.metric("Lead Score", f"{lead['overall_score']}/100")
-            st.metric("Qualification", lead['qualification'].upper())
+            st.metric("Qualification", lead["qualification"].upper())
         else:
             st.warning("No conversation yet.")
 
-# --- Footer ---
+
 st.markdown("---")
 st.markdown("""
 <div style="text-align:center;color:#666;">

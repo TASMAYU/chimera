@@ -1,14 +1,3 @@
-"""
-ai.py - Chimera AI Module
-Contains the core AI logic for the Chimera assistant
-
-This module handles:
-- AI response generation using Gemini
-- Conversation management
-- Context-aware responses using RAG (FAISS + Hugging Face)
-- Lead qualification logic
-"""
-
 import os
 import faiss
 import numpy as np
@@ -21,99 +10,50 @@ load_dotenv()
 genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
 
 
-# ------------------------------
-# FAISS + Hugging Face Knowledge Base
-# ------------------------------
-
 class KnowledgeBase:
-    """
-    Lightweight FAISS-based knowledge base with Hugging Face embeddings.
-    """
-
     def __init__(self, docs: List[str]):
-        """
-        Initialize FAISS index with embeddings.
-        Args:
-            docs: List of text chunks or paragraphs to index.
-        """
         self.docs = docs
         self.model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
-        print("🔹 Building FAISS index for knowledge base...")
-
-        # Compute embeddings
-        self.embeddings = self.model.encode(docs, show_progress_bar=True)
-        self.embeddings = np.array(self.embeddings).astype("float32")
-
-        # Initialize FAISS index
+        self.embeddings = np.array(self.model.encode(docs, show_progress_bar=True)).astype("float32")
         self.index = faiss.IndexFlatL2(self.embeddings.shape[1])
         self.index.add(self.embeddings)
 
-        print(f"✅ Knowledge base initialized with {len(docs)} documents.")
-
     def search(self, query: str, n: int = 3, db=None) -> List[str]:
-        """
-        Retrieve top-n most relevant chunks for a query.
-        Args:
-            query: User's query text.
-            n: Number of chunks to return.
-            db: (Optional) Ignored; for interface compatibility.
-        Returns:
-            List of top-n relevant text chunks.
-        """
-        query_emb = self.model.encode([query])
-        query_emb = np.array(query_emb).astype("float32")
-
+        query_emb = np.array(self.model.encode([query])).astype("float32")
         distances, indices = self.index.search(query_emb, n)
         return [self.docs[i] for i in indices[0] if i < len(self.docs)]
 
 
-# ------------------------------
-# Main Chimera AI Assistant
-# ------------------------------
-
 class ChimeraAI:
-    """
-    Main AI assistant class for Chimera
-    Handles conversation management and response generation
-    """
-
     def __init__(self, knowledge_base):
         self.kb = knowledge_base
         self.model = genai.GenerativeModel('gemini-2.5-flash')
         self.conversations = {}
 
-        self.system_prompt = """You are Chimera, an intelligent AI sales assistant. Your role:
+        self.system_prompt = """You are Chimera, an intelligent AI sales assistant.
 
-1. Answer visitor questions accurately using the provided context
-2. Be conversational, helpful, and professional
-3. Qualify leads by understanding their needs and pain points
-4. Guide visitors toward booking meetings or providing contact information
-5. Stay in character as a knowledgeable sales representative
+1. Answer visitor questions using the provided context.
+2. Be conversational, helpful, and professional.
+3. Qualify leads by understanding their needs and goals.
+4. Encourage visitors to schedule a demo or share contact details.
+5. Stay consistent with the role of a friendly and informed representative.
 
 Guidelines:
-- Use the context to give specific, accurate answers
-- If information isn't in the context, politely say so and offer to help differently
-- Ask clarifying questions to better understand visitor needs
-- Be concise but thorough - aim for 2-4 sentences unless more detail is needed
-- Show genuine enthusiasm about helping
-- When appropriate, suggest next steps (demo, meeting, consultation)
-- Focus on understanding the visitor's pain points and how the product/service solves them"""
+- Use the given context whenever possible.
+- If the context doesn’t contain the answer, politely say so.
+- Keep responses natural and clear, 2–4 sentences unless more detail is needed.
+- Ask questions to better understand the visitor’s needs.
+- Maintain a tone of genuine enthusiasm and helpfulness."""
 
         self.lead_qualification_prompt = """
-Additionally, assess the lead quality based on:
-- Company size and industry (if mentioned)
+Also, assess the lead quality based on:
+- Company size or industry (if mentioned)
 - Budget indicators
 - Decision-making authority
-- Timeline for implementation
-- Specific pain points mentioned
+- Timeline urgency
+- Specific pain points
 
-If the visitor seems like a qualified lead, gently guide them toward scheduling a meeting or demo.
-"""
-
-    # ------------------------------
-    # Conversation Management
-    # ------------------------------
+If the lead seems qualified, gently suggest scheduling a call or demo."""
 
     def get_conversation(self, session_id: str) -> List[Dict]:
         if session_id not in self.conversations:
@@ -126,13 +66,9 @@ If the visitor seems like a qualified lead, gently guide them toward scheduling 
             return True
         return False
 
-    # ------------------------------
-    # Prompt Construction Helpers
-    # ------------------------------
-
     def _build_context_string(self, context_chunks: List[str]) -> str:
         if not context_chunks:
-            return "No specific context found. Use general sales and service knowledge."
+            return "No relevant context found. Use general knowledge."
         return "\n\n".join([f"[Context {i+1}]\n{chunk}" for i, chunk in enumerate(context_chunks)])
 
     def _build_history_string(self, history: List[Dict], max_exchanges: int = 3) -> str:
@@ -140,10 +76,6 @@ If the visitor seems like a qualified lead, gently guide them toward scheduling 
             return "This is the start of the conversation."
         recent = history[-(max_exchanges * 2):]
         return "\n\n".join([f"{msg['role'].title()}: {msg['content']}" for msg in recent])
-
-    # ------------------------------
-    # Lead Qualification Logic
-    # ------------------------------
 
     def _analyze_lead_quality(self, message: str, history: List[Dict]) -> Dict:
         indicators = {
@@ -154,7 +86,6 @@ If the visitor seems like a qualified lead, gently guide them toward scheduling 
         }
 
         convo = " ".join([msg['content'].lower() for msg in history] + [message.lower()])
-
         score = {
             'high_intent': any(w in convo for w in indicators['high_intent']),
             'decision_maker': any(w in convo for w in indicators['decision_maker']),
@@ -163,7 +94,7 @@ If the visitor seems like a qualified lead, gently guide them toward scheduling 
             'message_count': len(history) // 2
         }
 
-        overall = (
+        total = (
             (score['high_intent'] * 30)
             + (score['decision_maker'] * 25)
             + (score['budget_discussed'] * 20)
@@ -171,13 +102,9 @@ If the visitor seems like a qualified lead, gently guide them toward scheduling 
             + (min(score['message_count'] * 2, 10))
         )
 
-        score['overall_score'] = overall
-        score['qualification'] = 'hot' if overall >= 60 else 'warm' if overall >= 30 else 'cold'
+        score['overall_score'] = total
+        score['qualification'] = 'hot' if total >= 60 else 'warm' if total >= 30 else 'cold'
         return score
-
-    # ------------------------------
-    # Response Generation (RAG)
-    # ------------------------------
 
     def generate_response(self, message: str, session_id: str, db: Optional[object] = None, enable_lead_qualification: bool = False) -> Dict[str, any]:
         history = self.get_conversation(session_id)
@@ -211,12 +138,12 @@ If the visitor seems like a qualified lead, gently guide them toward scheduling 
                 ),
             )
 
-            assistant_msg = response.text.strip()
+            reply = response.text.strip()
             history.append({"role": "user", "content": message})
-            history.append({"role": "assistant", "content": assistant_msg})
+            history.append({"role": "assistant", "content": reply})
 
             result = {
-                "response": assistant_msg,
+                "response": reply,
                 "session_id": session_id,
                 "context_used": len(context_chunks) > 0,
             }
@@ -229,27 +156,23 @@ If the visitor seems like a qualified lead, gently guide them toward scheduling 
         except Exception as e:
             raise Exception(f"AI generation failed: {str(e)}")
 
-    # ------------------------------
-    # Utility Functions
-    # ------------------------------
-
     def generate_summary(self, session_id: str) -> str:
         history = self.get_conversation(session_id)
         if not history:
             return "No conversation to summarize."
 
-        convo_text = "\n".join([f"{m['role'].title()}: {m['content']}" for m in history])
-        summary_prompt = f"""Summarize this sales conversation including:
-1. Main topics discussed
-2. Customer needs/pain points
-3. Products/services of interest
-4. Next steps
-5. Overall lead quality
+        convo = "\n".join([f"{m['role'].title()}: {m['content']}" for m in history])
+        summary_prompt = f"""Summarize this sales conversation, covering:
+1. Key discussion points
+2. Customer needs and concerns
+3. Products or services mentioned
+4. Next actions or follow-ups
+5. Lead quality overview
 
 Conversation:
-{convo_text}
+{convo}
 
-Provide a concise summary:"""
+Provide a short, clear summary:"""
 
         try:
             response = self.model.generate_content(summary_prompt)
@@ -269,6 +192,5 @@ Provide a concise summary:"""
         }
 
 
-# Factory function
 def create_ai_assistant(knowledge_base) -> ChimeraAI:
     return ChimeraAI(knowledge_base)
